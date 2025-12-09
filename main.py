@@ -84,7 +84,7 @@ def login_google(
 
     payload = {
         "postBody": post_body,
-        "requestUri": "http://192.168.0.138:3000",
+        "requestUri": "https://sinuapp.netlify.app/",
         "returnIdpCredential": True,
         "returnSecureToken": True
     }
