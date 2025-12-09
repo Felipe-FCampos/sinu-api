@@ -1,0 +1,4 @@
+.env
+secrets/
+pycache__/
+__pycache__/
