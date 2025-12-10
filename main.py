@@ -103,8 +103,8 @@ def login_google(
         key="refresh_token",
         value=refresh,
         httponly=True,
-        samesite="strict",
-        secure=False,   # PROD: True (HTTPS)
+        samesite="none",  # Necessário para cross-site
+        secure=True,      # Necessário para samesite="none" e HTTPS
         path="/auth",
         max_age=60 * 60 * 24 * 30
     )
@@ -165,8 +165,8 @@ async def signup(user: UserData, res: Response):
         key="refresh_token",
         value=data["refreshToken"],
         httponly=True,
-        samesite="strict",
-        secure=False,   # DEV
+        samesite="none",  # Necessário para cross-site
+        secure=True,      # Necessário para samesite="none" e HTTPS
         path="/auth",
         max_age=60 * 60 * 24 * 30
     )
@@ -190,8 +190,8 @@ async def login(user: UserData, res: Response):
         key="refresh_token",
         value=data["refreshToken"],
         httponly=True,
-        samesite="strict",
-        secure=False,   # DEV: False; PROD (HTTPS): True
+        samesite="none",  # Necessário para cross-site
+        secure=True,      # Necessário para samesite="none" e HTTPS
         path="/auth",
         max_age=60 * 60 * 24 * 30  # 30 dias
     )
@@ -223,8 +223,8 @@ def refresh(req: Request, res: Response, refreshToken: str | None = Body(default
             key="refresh_token",
             value=data["refresh_token"],
             httponly=True,
-            samesite="strict",
-            secure=False,  # DEV
+            samesite="none",  # Necessário para cross-site
+            secure=True,      # Necessário para samesite="none" e HTTPS
             path="/auth",
             max_age=60 * 60 * 24 * 30
         )
