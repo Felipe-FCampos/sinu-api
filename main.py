@@ -6,6 +6,7 @@ from fastapi import Depends
 from pydantic import BaseModel
 import os, requests
 from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta 
 
 app =  FastAPI()
 
@@ -18,6 +19,7 @@ app.add_middleware(
 )
 
 API_KEY = os.getenv("API_KEY")
+JOB_TOKEN = os.getenv("JOB_TOKEN")
 
 class UserData(BaseModel):
     name: str | None = None
@@ -66,6 +68,26 @@ def verify_firebase_token(authorization: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid token")
     
+def verify_job_token(authorization: str = Header(None)):
+    if authorization != f"Bearer {JOB_TOKEN}":
+        raise HTTPException(status_code=401, detail="Invalid job token")
+    
+def parse_next_payment(value):
+    
+    if value is None:
+        return None
+    
+    if hasattr(value, "to_datetime"):  # Timestamp do Firestore
+        return value.to_datetime().astimezone(timezone.utc)
+    
+    if isinstance(value, str):
+        # "2026-01-01T19:41:21.994Z" -> datetime
+        if value.endswith("Z"):
+            value = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(value).astimezone(timezone.utc)
+
+    return None
+
 @app.post("/auth/google")
 def login_google(
     res: Response,
@@ -348,3 +370,73 @@ def update_subscription(
     doc_ref.update(update_data)
 
     return {"detail": "Subscription updated successfully"}
+
+@app.post("/job/recalculate", dependencies=[Depends(verify_job_token)])
+def recalculate_subscriptions():
+    now = datetime.now(timezone.utc)
+    
+    subscriptions_ref = fs.collection_group("subscriptions")
+    batch = fs.batch()
+    updated_count = 0
+    
+    for doc in subscriptions_ref.stream():
+        data = doc.to_dict()
+        
+        status = data.get("status")
+        if status == 0:
+            continue
+        
+        next_payment_raw = data.get("nextPayment")
+        next_payment = parse_next_payment(next_payment_raw)
+        
+        if not next_payment:
+            continue 
+        
+        # Diferença em dias (sem hora)
+        days_diff = (next_payment.date() - now.date()).days
+        
+        new_status = status
+        new_next_payment = next_payment
+        
+        # Já passou da data -> Expired (3) e recalcula próximo ciclo
+        if days_diff < 0:
+            new_status = 3  # Expired
+
+            freq = data.get("billingFrequency", "monthly")
+
+            # Garante que o próximo pagamento vai pra frente do "now"
+            while new_next_payment.date() <= now.date():
+                if freq == "yearly":
+                    new_next_payment = new_next_payment + relativedelta(years=1)
+                else:  # default: monthly
+                    new_next_payment = new_next_payment + relativedelta(months=1)
+
+        # Faltando 10 dias ou menos -> Expiring (2)
+        elif days_diff <= 10:
+            new_status = 2  # Expiring
+
+        # Senão, deixa Active (1)
+        else:
+            new_status = 1  # Active
+            
+        update_data = {}
+        if new_status != status:
+            update_data["status"] = new_status
+            
+        if new_next_payment != next_payment:
+            # salva em ISO+Z (ou direto como Timestamp, se preferir)
+            update_data["nextPayment"] = new_next_payment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            
+        if update_data:
+            batch.update(doc.reference, update_data)
+            updated_count += 1
+
+            # Commit em lotes pra não estourar limite
+            if updated_count % 400 == 0:
+                batch.commit()
+                batch = fs.batch()
+                
+    if updated_count % 400 != 0:
+        batch.commit()
+    
+    return {"ok": True, "updated": updated_count}
