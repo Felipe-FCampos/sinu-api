@@ -113,7 +113,7 @@ def login_google(
     # O padrão é a URL de produção
     request_uri = "https://sinuapp.netlify.app/" 
     if origin and "192.168.0.138" in origin:
-        request_uri = "https://192.168.0.138:3000/"
+        request_uri = "http://192.168.0.138:3000/"
     # ------------------------------------
 
     payload = {
