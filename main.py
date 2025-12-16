@@ -90,6 +90,7 @@ def parse_next_payment(value):
 
 @app.post("/auth/google")
 def login_google(
+    req: Request, # Adicionado para acessar os cabeçalhos
     res: Response,
     googleIdToken: str | None = Body(default=None, embed=True),
     accessToken: str | None = Body(default=None, embed=True),
@@ -104,9 +105,20 @@ def login_google(
     else:
         post_body = f"access_token={accessToken}&providerId=google.com"                       
 
+    # --- LÓGICA DINÂMICA ADICIONADA ---
+    # Pega a origem da requisição (ex: "https://sinuapp.netlify.app")
+    origin = req.headers.get("origin")
+
+    # Define a URI de requisição baseada na origem
+    # O padrão é a URL de produção
+    request_uri = "https://sinuapp.netlify.app/" 
+    if origin and "192.168.0.138" in origin:
+        request_uri = "https://192.168.0.138:3000/"
+    # ------------------------------------
+
     payload = {
         "postBody": post_body,
-        "requestUri": "https://sinuapp.netlify.app/",
+        "requestUri": request_uri, # Usa a variável dinâmica
         "returnIdpCredential": True,
         "returnSecureToken": True
     }
