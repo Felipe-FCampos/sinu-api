@@ -2,3 +2,6 @@
 secrets/
 pycache__/
 __pycache__/
+# Certificados e chaves de segurança locais
+key.pem
+cert.pem
