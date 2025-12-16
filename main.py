@@ -12,7 +12,7 @@ app =  FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://192.168.0.138:3000", "https://sinuapp.netlify.app"],
+    allow_origins=["http://localhost:3000", "http://192.168.0.138:3000", "https://sinuapp.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
