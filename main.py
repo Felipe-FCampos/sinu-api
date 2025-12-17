@@ -326,6 +326,9 @@ def create_subscription(subscription: SubscriptionData, decoded = Depends(verify
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Recalcula o status inicial da nova assinatura
+    _update_subscription_status(doc_ref[1])
+
     return {
         "detail": "Subscription created successfully",
         "subscription_id": inserted_id
@@ -381,74 +384,106 @@ def update_subscription(
     # Atualiza no Firestore
     doc_ref.update(update_data)
 
+    # Recalcula o status após a atualização
+    _update_subscription_status(doc_ref)
+
     return {"detail": "Subscription updated successfully"}
+
+def _update_subscription_status(doc_ref):
+    """
+    Lê uma assinatura, recalcula seu status (Ativo, Expirando, Vencido)
+    e a atualiza no banco de dados se o status mudou.
+    """
+    doc = doc_ref.get()
+    if not doc.exists:
+        return
+
+    data = doc.to_dict()
+    status = data.get("status")
+    
+    # Ignora assinaturas já canceladas/inativas
+    if status == 0:
+        return
+
+    next_payment_raw = data.get("nextPayment")
+    next_payment = parse_next_payment(next_payment_raw)
+    
+    if not next_payment:
+        return
+
+    now = datetime.now(timezone.utc)
+    days_diff = (next_payment.date() - now.date()).days
+    
+    new_status = status
+    
+    if days_diff < 0:
+        new_status = 3  # Expired
+    elif days_diff <= 10:
+        new_status = 2  # Expiring
+    else:
+        new_status = 1  # Active
+        
+    if new_status != status:
+        doc_ref.update({"status": new_status})
+
+
+@app.post("/subscription/confirm-payment/{subscription_id}")
+def confirm_payment(
+    subscription_id: str,
+    decoded = Depends(verify_firebase_token)
+):
+    uid = decoded.get("uid") or decoded.get("user_id")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    doc_ref = (
+        fs.collection("accounts")
+          .document(uid)
+          .collection("subscriptions")
+          .document(subscription_id)
+    )
+    
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    data = doc.to_dict()
+    
+    # Garante que só podemos confirmar pagamento de uma assinatura vencida
+    if data.get("status") != 3:
+        raise HTTPException(status_code=400, detail="Subscription is not expired")
+
+    # Lógica para calcular a próxima data de pagamento
+    now = datetime.now(timezone.utc)
+    next_payment = parse_next_payment(data.get("nextPayment"))
+    freq = data.get("billingFrequency", "monthly")
+
+    # Avança a data de pagamento até que ela esteja no futuro
+    while next_payment.date() <= now.date():
+        if freq == "yearly":
+            next_payment = next_payment + relativedelta(years=1)
+        else:  # default: monthly
+            next_payment = next_payment + relativedelta(months=1)
+            
+    # Prepara os dados para atualização: reativa o status e avança a data
+    update_data = {
+        "status": 1, # Reativa para "Active"
+        "nextPayment": next_payment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    }
+
+    doc_ref.update(update_data)
+
+    return {"detail": "Payment confirmed and subscription reactivated", 
+            "update": update_data}
 
 @app.post("/job/recalculate", dependencies=[Depends(verify_job_token)])
 def recalculate_subscriptions():
-    now = datetime.now(timezone.utc)
-    
     subscriptions_ref = fs.collection_group("subscriptions")
-    batch = fs.batch()
     updated_count = 0
     
     for doc in subscriptions_ref.stream():
-        data = doc.to_dict()
-        
-        status = data.get("status")
-        if status == 0:
-            continue
-        
-        next_payment_raw = data.get("nextPayment")
-        next_payment = parse_next_payment(next_payment_raw)
-        
-        if not next_payment:
-            continue 
-        
-        # Diferença em dias (sem hora)
-        days_diff = (next_payment.date() - now.date()).days
-        
-        new_status = status
-        new_next_payment = next_payment
-        
-        # Já passou da data -> Expired (3) e recalcula próximo ciclo
-        if days_diff < 0:
-            new_status = 3  # Expired
-
-            freq = data.get("billingFrequency", "monthly")
-
-            # Garante que o próximo pagamento vai pra frente do "now"
-            while new_next_payment.date() <= now.date():
-                if freq == "yearly":
-                    new_next_payment = new_next_payment + relativedelta(years=1)
-                else:  # default: monthly
-                    new_next_payment = new_next_payment + relativedelta(months=1)
-
-        # Faltando 10 dias ou menos -> Expiring (2)
-        elif days_diff <= 10:
-            new_status = 2  # Expiring
-
-        # Senão, deixa Active (1)
-        else:
-            new_status = 1  # Active
-            
-        update_data = {}
-        if new_status != status:
-            update_data["status"] = new_status
-            
-        if new_next_payment != next_payment:
-            # salva em ISO+Z (ou direto como Timestamp, se preferir)
-            update_data["nextPayment"] = new_next_payment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-            
-        if update_data:
-            batch.update(doc.reference, update_data)
-            updated_count += 1
-
-            # Commit em lotes pra não estourar limite
-            if updated_count % 400 == 0:
-                batch.commit()
-                batch = fs.batch()
-                
-    if updated_count % 400 != 0:
-        batch.commit()
+        # A lógica complexa agora está na função auxiliar
+        _update_subscription_status(doc.reference)
+        updated_count += 1
     
-    return {"ok": True, "updated": updated_count}
+    return {"ok": True, "processed": updated_count}
