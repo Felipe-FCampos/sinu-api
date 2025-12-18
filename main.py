@@ -265,6 +265,17 @@ def refresh(req: Request, res: Response, refreshToken: str | None = Body(default
 
     return {"idToken": data["id_token"], "uid": data.get("user_id"), "token_type": "Bearer"}
 
+@app.post("/auth/logout")
+def logout(res: Response):
+    res.delete_cookie(
+        key="refresh_token",
+        path="/auth",
+        samesite="none",
+        secure=True,
+        httponly=True
+    )
+    return {"detail": "Logged out successfully"}
+
 @app.get("/user/profile")
 def get_user_profile(decoded = Depends(verify_firebase_token)):
     uid = decoded.get("uid") or decoded.get("user_id")
