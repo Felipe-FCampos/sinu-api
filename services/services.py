@@ -26,7 +26,7 @@ def send_email(name: str, email: str, subject: str, message: str) -> bool:
     msg["Reply-To"] = formataddr((name, email))
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=200) as server:
             server.starttls()
             server.login(MY_EMAIL, MY_APP_KEY)
             server.sendmail(MY_EMAIL, [SUPPORT_TO], msg.as_string())
