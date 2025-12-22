@@ -5,3 +5,4 @@ python-dotenv
 firebase-admin
 requests
 python-dateutil
+google-auth

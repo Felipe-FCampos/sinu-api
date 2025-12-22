@@ -7,12 +7,19 @@ from pydantic import BaseModel
 import os, requests
 from datetime import datetime, timezone
 from dateutil.relativedelta import relativedelta 
+from services.services import send_email
 
 app =  FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://192.168.0.138:3000", "https://sinuapp.netlify.app"],
+    allow_origins=[
+        "http://localhost:5173", 
+        "http://localhost:3000", 
+        "http://192.168.0.138:3000", 
+        "https://sinuapp.netlify.app"
+        "https://sinuservices.netlify.app"
+        ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -53,6 +60,12 @@ class SubscriptionUpdate(BaseModel):
     status: int | None = None
     cardBank: str | None = None
     cardFinalNumbers: str | None = None
+
+class SupportRequest(BaseModel):
+    name: str
+    email: str
+    subject: str
+    message: str
 
 @app.get("/")
 async def root():
@@ -498,3 +511,13 @@ def recalculate_subscriptions():
         updated_count += 1
     
     return {"ok": True, "processed": updated_count}
+
+
+@app.post("/api/support")
+def support_request(request: SupportRequest):
+
+    success = send_email(request.name, request.email, request.subject, request.message)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to send support request")
+
+    return {"detail": "Support request sent successfully"}
