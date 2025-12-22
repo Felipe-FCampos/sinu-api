@@ -17,7 +17,7 @@ app.add_middleware(
         "http://localhost:5173", 
         "http://localhost:3000", 
         "http://192.168.0.138:3000", 
-        "https://sinuapp.netlify.app"
+        "https://sinuapp.netlify.app",
         "https://sinuservices.netlify.app"
         ],
     allow_credentials=True,
