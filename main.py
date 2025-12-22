@@ -19,7 +19,7 @@ app.add_middleware(
         "http://192.168.0.138:3000", 
         "https://sinuapp.netlify.app",
         "https://sinuservices.netlify.app"
-        ],
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
