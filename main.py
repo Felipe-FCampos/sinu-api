@@ -413,6 +413,19 @@ def update_subscription(
 
     return {"detail": "Subscription updated successfully"}
 
+@app.get("/cards/list")
+def list_card_brands(decoded = Depends(verify_firebase_token)):
+    uid = decoded.get("uid") or decoded.get("user_id")
+
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    
+    snapshots = fs.collection("accounts").document(uid).collection("cards").stream()
+
+    cards = [doc.to_dict() for doc in snapshots]
+    return {"cards": cards}
+
+
 def _update_subscription_status(doc_ref):
     """
     Lê uma assinatura, recalcula seu status (Ativo, Expirando, Vencido)
