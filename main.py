@@ -67,6 +67,15 @@ class SupportRequest(BaseModel):
     subject: str
     message: str
 
+class CardData(BaseModel):
+    cardName: str
+    totalSpent: float | None = None
+    cardBank: str
+    cardFinalNumbers: str
+    dueDate: int
+    limit: float
+    status: int
+
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
@@ -425,6 +434,94 @@ def list_card_brands(decoded = Depends(verify_firebase_token)):
     cards = [doc.to_dict() for doc in snapshots]
     return {"cards": cards}
 
+@app.post("/cards/create")
+def create_card(card: CardData, decoded = Depends(verify_firebase_token)):
+    uid = decoded.get("uid") or decoded.get("user_id")
+
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    
+    card_data = card.model_dump()
+    new_card_final_numbers = card_data.get("cardFinalNumbers")
+    
+    total_spent = 0.0
+    
+    # Query all subscriptions for the user
+    subscriptions_snapshots = fs.collection("accounts").document(uid).collection("subscriptions").stream()
+    
+    for sub in subscriptions_snapshots:
+        sub_data = sub.to_dict()
+        # Check if the subscription uses the same card
+        if sub_data.get("cardFinalNumbers") == new_card_final_numbers:
+            # Add the price to the total
+            total_spent += sub_data.get("price", 0.0)
+            
+    # Update the totalSpent in the card data to be saved
+    card_data["totalSpent"] = total_spent
+
+    try:
+        # Adiciona o cartão e pega a referência do documento
+        timestamp, doc_ref = fs.collection("accounts").document(uid).collection("cards").add(card_data)
+        # Pega o ID gerado
+        card_id = doc_ref.id
+        # Atualiza o documento para incluir seu próprio ID
+        doc_ref.update({"id": card_id})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"detail": "Card created successfully"}
+
+@app.patch("/cards/update/{card_id}")
+def update_card(
+    card_id: str,
+    update: CardData,
+    decoded = Depends(verify_firebase_token)
+):
+    uid = decoded.get("uid") or decoded.get("user_id")
+
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    doc_ref = (
+        fs.collection("accounts")
+          .document(uid)
+          .collection("cards")
+          .document(card_id)
+    )
+
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    # Só pega os campos que realmente vieram no payload
+    update_data = update.model_dump(exclude_unset=True)
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Atualiza no Firestore
+    doc_ref.update(update_data)
+
+    return {"detail": "Card updated successfully"}
+
+@app.delete("/cards/delete/{card_id}")
+def delete_card(card_id: str, decoded = Depends(verify_firebase_token)):
+    uid = decoded.get("uid") or decoded.get("user_id")
+    
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    
+    doc_ref = fs.collection("accounts").document(uid).collection("cards").document(card_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    try:
+        doc_ref.delete()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"detail": "Card deleted successfully"}
 
 def _update_subscription_status(doc_ref):
     """
