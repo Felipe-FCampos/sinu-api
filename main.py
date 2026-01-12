@@ -76,6 +76,32 @@ class CardData(BaseModel):
     limit: float
     status: int
 
+def _update_card_total_spent(uid: str, card_final_numbers: str):
+    """
+    Recalcula o total gasto de um cartão específico com base em todas as
+    assinaturas associadas a ele.
+    """
+    if not card_final_numbers:
+        return
+
+    # 1. Encontra todas as assinaturas para este cartão
+    subscriptions_ref = fs.collection("accounts").document(uid).collection("subscriptions")
+    query = subscriptions_ref.where("cardFinalNumbers", "==", card_final_numbers)
+    
+    total_spent = 0.0
+    for sub in query.stream():
+        total_spent += sub.to_dict().get("price", 0.0)
+
+    # 2. Encontra o documento do cartão para atualizar
+    cards_ref = fs.collection("accounts").document(uid).collection("cards")
+    card_query = cards_ref.where("cardFinalNumbers", "==", card_final_numbers).limit(1)
+    
+    card_doc = next(card_query.stream(), None)
+    if card_doc:
+        # 3. Atualiza o total gasto no documento do cartão
+        card_doc.reference.update({"totalSpent": total_spent})
+
+
 @app.get("/")
 async def root():
     return {"message": "Hello World"}
@@ -362,6 +388,10 @@ def create_subscription(subscription: SubscriptionData, decoded = Depends(verify
     # Recalcula o status inicial da nova assinatura
     _update_subscription_status(doc_ref[1])
 
+    # ATUALIZA O GASTO TOTAL DO CARTÃO ASSOCIADO
+    if subscription.cardFinalNumbers:
+        _update_card_total_spent(uid, subscription.cardFinalNumbers)
+
     return {
         "detail": "Subscription created successfully",
         "subscription_id": inserted_id
@@ -379,10 +409,18 @@ def delete_subscription(subscription_id: str, decoded = Depends(verify_firebase_
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Subscription not found")
 
+    # Guarda os dados antes de deletar para saber qual cartão atualizar
+    sub_data = doc.to_dict()
+    card_to_update = sub_data.get("cardFinalNumbers")
+
     try:
         doc_ref.delete()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # ATUALIZA O GASTO TOTAL DO CARTÃO ASSOCIADO
+    if card_to_update:
+        _update_card_total_spent(uid, card_to_update)
 
     return {"detail": "Subscription deleted successfully"}
 
@@ -408,6 +446,10 @@ def update_subscription(
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Subscription not found")
 
+    # Guarda os dados antigos para saber qual cartão atualizar
+    old_data = doc.to_dict()
+    old_card_final_numbers = old_data.get("cardFinalNumbers")
+
     # Só pega os campos que realmente vieram no payload
     update_data = update.model_dump(exclude_unset=True)
 
@@ -419,6 +461,19 @@ def update_subscription(
 
     # Recalcula o status após a atualização
     _update_subscription_status(doc_ref)
+
+    # ATUALIZA O GASTO TOTAL DO(S) CARTÃO(ÕES) AFETADO(S)
+    new_card_final_numbers = update_data.get("cardFinalNumbers")
+    
+    # Se o cartão mudou, atualiza o antigo e o novo
+    if new_card_final_numbers and new_card_final_numbers != old_card_final_numbers:
+        if old_card_final_numbers:
+            _update_card_total_spent(uid, old_card_final_numbers)
+        _update_card_total_spent(uid, new_card_final_numbers)
+    # Se o cartão não mudou mas o preço sim, atualiza o mesmo cartão
+    elif "price" in update_data and old_card_final_numbers:
+        _update_card_total_spent(uid, old_card_final_numbers)
+
 
     return {"detail": "Subscription updated successfully"}
 
@@ -522,6 +577,20 @@ def delete_card(card_id: str, decoded = Depends(verify_firebase_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"detail": "Card deleted successfully"}
+
+@app.get("/cards/{card_id}")
+def get_card(card_id: str, decoded = Depends(verify_firebase_token)):
+    uid = decoded.get("uid") or decoded.get("user_id")
+
+    if not uid:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    doc_ref = fs.collection("accounts").document(uid).collection("cards").document(card_id)
+    doc = doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    return {"card": doc.to_dict()}
 
 def _update_subscription_status(doc_ref):
     """
